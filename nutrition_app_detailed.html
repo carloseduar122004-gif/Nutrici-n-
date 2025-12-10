@@ -1,0 +1,472 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>App Nutrición Detallada — GET, Actividad y Menú Semanal</title>
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,'Helvetica Neue',Arial;margin:18px;max-width:980px;background:#fafafa;color:#111}
+    h1{color:#0a4a78}
+    label{display:block;margin-top:10px;font-weight:600}
+    input, select, textarea{width:100%;padding:8px;margin-top:6px;border:1px solid #ccc;border-radius:6px}
+    button{margin-top:12px;padding:10px 14px;border-radius:8px;border:none;background:#0a4a78;color:white;font-weight:700;cursor:pointer}
+    .box{border:1px solid #ddd;padding:12px;border-radius:8px;margin-top:14px;background:#fff}
+    .result{white-space:pre-wrap;font-family:system-ui;background:#fff;padding:12px;border-radius:8px;border:1px dashed #ccc}
+    .day{border:1px solid #e6e6e6;padding:10px;border-radius:8px;margin-bottom:12px;background:#fff}
+    .meal{margin-bottom:8px}
+    ul{margin:6px 0 12px 18px}
+    .note{font-size:0.95em;color:#555}
+    .small{font-size:0.9em;color:#666}
+    .link-btn{display:inline-block;margin-right:8px;background:#2a8f4a;padding:8px 10px;color:white;border-radius:8px;text-decoration:none}
+  </style>
+</head>
+<body>
+  <h1>App Nutrición Detallada</h1>
+  <p class="small">Completa los datos y pulsa <strong>Generar plan</strong>. El plan incluye cálculo de GET (Mifflin–St Jeor), actividades y un menú semanal detallado (3 comidas + 2 refrigerios) con ingredientes en medidas caseras y pasos claros, sin símbolos extraños.</p>
+
+  <div class="box">
+    <label>Nombre</label><input id="name" placeholder="Ej: María Pérez"/>
+    <label>Edad</label><input id="age" type="number" min="0" value="30"/>
+    <label>Género</label><select id="sex"><option value="female">Mujer</option><option value="male">Hombre</option></select>
+    <label>Peso (kg)</label><input id="weight" type="number" step="0.1" value="70"/>
+    <label>Talla (cm)</label><input id="height" type="number" step="0.1" value="170"/>
+    <label>Nivel de actividad</label>
+    <select id="activity">
+      <option value="sedentary">Sedentario (poco o ningún ejercicio)</option>
+      <option value="light">Ligero (1-3 días/semana)</option>
+      <option value="moderate">Moderado (3-5 días/semana)</option>
+      <option value="active">Activo (6-7 días/semana)</option>
+      <option value="very">Muy activo</option>
+    </select>
+    <label>Condiciones médicas (separadas por coma)</label><input id="conditions" placeholder="diabetes, hipertensión"/>
+    <label>Medicamentos (separados por coma)</label><input id="meds" placeholder="metformina, losartán"/>
+    <label>Alergias o intolerancias (separadas por coma)</label><input id="allergies" placeholder="gluten, lactosa, nueces"/>
+    <label>Preferencias</label>
+    <select id="preference">
+      <option value="none">Ninguna</option>
+      <option value="vegetarian">Vegetariana</option>
+      <option value="vegan">Vegana</option>
+      <option value="lowcarb">Baja en carbohidratos</option>
+      <option value="highprotein">Alta en proteínas</option>
+    </select>
+    <div style="margin-top:10px">
+      <button onclick="generate()">Generar plan</button>
+      <a id="downloadLink" class="link-btn" href="#" onclick="downloadFile()">Descargar JSON</a>
+    </div>
+  </div>
+
+  <div id="output" class="box" style="display:none">
+    <h2>Resumen y cálculo</h2>
+    <div id="summary" class="result"></div>
+
+    <h2>Actividad física recomendada</h2>
+    <div id="activities" class="result"></div>
+
+    <h2>Menú semanal detallado</h2>
+    <div id="menu" class="small"></div>
+
+    <p class="note">Nota: Este plan es orientativo. Para condiciones médicas, embarazo, lactancia o cambio de medicación, consulte con un profesional de salud.</p>
+  </div>
+
+<script>
+function round(v){return Math.round(v*10)/10}
+
+function mifflinBMR(sex, weight, height, age){
+  if(sex==='male') return 10*weight + 6.25*height - 5*age + 5;
+  return 10*weight + 6.25*height - 5*age - 161;
+}
+
+function activityFactor(code){ return {sedentary:1.2, light:1.375, moderate:1.55, active:1.725, very:1.9}[code] || 1.2; }
+
+function adjustTDEE(tdee, conds){
+  let notes=[];
+  let c=conds.map(s=>s.toLowerCase());
+  if(c.includes('diabetes')) notes.push('Diabetes: reducir proporción de carbohidratos y controlar porciones. Priorizar carbohidratos complejos y fibra.');
+  if(c.includes('obesidad')||c.includes('sobrepeso')){ tdee = Math.round(tdee - 300); notes.push('Objetivo pérdida de peso: déficit moderado aprox. 300 kcal/día.'); }
+  if(c.includes('hipertensión')) notes.push('Hipertensión: limitar sal, preferir frutas y verduras ricas en potasio.');
+  return {tdee: tdee, notes: notes};
+}
+
+// Menú semanal fijo con recetas claras (medidas caseras)
+const weeklyMenu = {
+  "Lunes": {
+    "Desayuno": {
+      "plato": "Avena cocida con fruta",
+      "ingredientes": [
+        "1/2 taza de avena",
+        "1 taza de leche descremada o bebida vegetal",
+        "1 plátano en rodajas",
+        "1 cucharada de semillas de chía o linaza"
+      ],
+      "preparacion": "Cocinar la avena en la leche a fuego medio hasta espesar (5-7 minutos). Servir con plátano y semillas."
+    },
+    "Refrigerio 1": {
+      "plato": "Yogur natural con 1 cucharada de nueces",
+      "ingredientes": ["1 taza de yogur natural bajo en grasa", "1 cucharada de nueces picadas"],
+      "preparacion": "Servir el yogur y agregar las nueces por encima."
+    },
+    "Comida": {
+      "plato": "Pechuga de pollo a la plancha con arroz integral y brócoli",
+      "ingredientes": [
+        "120 g pechuga de pollo",
+        "1/2 taza (cocida) de arroz integral",
+        "1 taza de brócoli al vapor",
+        "1 cucharadita de aceite de oliva",
+        "Sal y pimienta al gusto"
+      ],
+      "preparacion": "Sazonar y cocinar la pechuga a la plancha 4-6 minutos por lado. Servir con arroz integral y brócoli al vapor rociado con aceite de oliva."
+    },
+    "Refrigerio 2": {
+      "plato": "Manzana y 10 almendras",
+      "ingredientes": ["1 manzana mediana", "10 almendras"],
+      "preparacion": "Lavar la manzana y acompañar con almendras."
+    },
+    "Cena": {
+      "plato": "Ensalada de atún",
+      "ingredientes": [
+        "1 lata de atún en agua (escurrida)",
+        "2 tazas de mezcla de lechugas",
+        "1/2 aguacate en rebanadas",
+        "1 tomate en cubos",
+        "Jugo de limón y una cucharadita de aceite de oliva"
+      ],
+      "preparacion": "Mezclar todos los ingredientes y aderezar con limón y aceite."
+    }
+  },
+  "Martes": {
+    "Desayuno": {
+      "plato": "Omelette de vegetales",
+      "ingredientes": ["2 huevos", "1/4 taza de espinacas picadas", "1/4 taza de champiñones rebanados", "1 cucharadita de aceite de oliva"],
+      "preparacion": "Batir los huevos, saltear los vegetales en aceite y agregar los huevos. Cocinar hasta cuajar."
+    },
+    "Refrigerio 1": {
+      "plato": "Palitos de zanahoria con hummus",
+      "ingredientes": ["1 zanahoria grande en palitos", "3 cucharadas de hummus"],
+      "preparacion": "Servir los palitos con hummus para untar."
+    },
+    "Comida": {
+      "plato": "Filete de salmón al horno con quinoa y ensalada",
+      "ingredientes": [
+        "120 g de salmón",
+        "1/2 taza de quinoa cocida",
+        "Ensalada de hojas verdes",
+        "1 cucharadita de aceite de oliva, jugo de limón"
+      ],
+      "preparacion": "Hornear el salmón a 180°C por 12-15 minutos. Acompañar con quinoa cocida y ensalada."
+    },
+    "Refrigerio 2": {
+      "plato": "1 yogur griego natural pequeño",
+      "ingredientes": ["1 yogur griego 125 g"],
+      "preparacion": "Consumir frío."
+    },
+    "Cena": {
+      "plato": "Tacos de lentejas y verduras",
+      "ingredientes": [
+        "1/2 taza de lentejas cocidas",
+        "2 tortillas integrales",
+        "1/2 taza de pimiento y cebolla salteados",
+        "Salsa fresca (opcional)"
+      ],
+      "preparacion": "Rellenar las tortillas con lentejas y vegetales salteados."
+    }
+  },
+  "Miércoles": {
+    "Desayuno": {
+      "plato": "Batido verde alto en proteínas",
+      "ingredientes": [
+        "1 taza de espinacas",
+        "1/2 taza de leche o bebida vegetal",
+        "1/2 plátano",
+        "1 cucharada de proteína en polvo opcional",
+        "1 cucharada de mantequilla de maní"
+      ],
+      "preparacion": "Licuar todos los ingredientes hasta obtener una mezcla homogénea."
+    },
+    "Refrigerio 1": {
+      "plato": "1 pera y 10 nueces",
+      "ingredientes": ["1 pera", "10 nueces"],
+      "preparacion": "Lavar la pera y consumir con nueces."
+    },
+    "Comida": {
+      "plato": "Tacos de pollo y frijoles negros",
+      "ingredientes": [
+        "100 g pechuga de pollo desmenuzada",
+        "1/2 taza frijoles negros cocidos",
+        "2 tortillas integrales",
+        "Lechuga y pico de gallo"
+      ],
+      "preparacion": "Armar tacos con pollo, frijoles, lechuga y pico de gallo."
+    },
+    "Refrigerio 2": {
+      "plato": "Palitos de apio con 1 cucharada de mantequilla de maní",
+      "ingredientes": ["3 tiras de apio", "1 cucharada de mantequilla de maní"],
+      "preparacion": "Untar la mantequilla en los palitos de apio."
+    },
+    "Cena": {
+      "plato": "Sopa ligera de verduras y garbanzos",
+      "ingredientes": [
+        "1 taza de caldo de verduras bajo en sal",
+        "1/2 taza de garbanzos cocidos",
+        "Verduras mixtas (zanahoria, calabacín, espinaca)"
+      ],
+      "preparacion": "Cocinar todo en la olla hasta que las verduras estén tiernas."
+    }
+  },
+  "Jueves": {
+    "Desayuno": {
+      "plato": "Tostada integral con aguacate y huevo",
+      "ingredientes": ["1 rebanada de pan integral", "1/2 aguacate", "1 huevo"],
+      "preparacion": "Tostar el pan, untar aguacate y colocar huevo pochado o cocido."
+    },
+    "Refrigerio 1": {
+      "plato": "1 naranja y 8 almendras",
+      "ingredientes": ["1 naranja", "8 almendras"],
+      "preparacion": "Consumir fruta con almendras."
+    },
+    "Comida": {
+      "plato": "Ensalada de quinoa con garbanzos y verduras",
+      "ingredientes": [
+        "1/2 taza de quinoa cocida",
+        "1/2 taza de garbanzos cocidos",
+        "Tomate, pepino, cebolla, perejil",
+        "Aderezo: cucharadita de aceite de oliva y limón"
+      ],
+      "preparacion": "Mezclar todos los ingredientes y aliñar."
+    },
+    "Refrigerio 2": {
+      "plato": "Yogur natural con una cucharada de avena",
+      "ingredientes": ["1 yogur natural", "1 cucharada de avena"],
+      "preparacion": "Mezclar y consumir."
+    },
+    "Cena": {
+      "plato": "Filete de pescado blanco a la plancha con espárragos",
+      "ingredientes": ["120 g pescado blanco", "Espárragos al vapor", "Rodaja de limón"],
+      "preparacion": "Cocinar el pescado a la plancha y servir con espárragos."
+    }
+  },
+  "Viernes": {
+    "Desayuno": {
+      "plato": "Pan integral con ricota y tomate",
+      "ingredientes": ["2 rebanadas de pan integral", "2 cucharadas de ricota", "Rodajas de tomate"],
+      "preparacion": "Untar ricota en el pan y colocar tomates."
+    },
+    "Refrigerio 1": {
+      "plato": "1 plátano",
+      "ingredientes": ["1 plátano"],
+      "preparacion": "Consumir natural."
+    },
+    "Comida": {
+      "plato": "Stir-fry de ternera magra con verduras y fideos integrales",
+      "ingredientes": [
+        "100 g de filete de ternera magra en tiras",
+        "1 taza de verduras mixtas",
+        "1/2 taza de fideos integrales cocidos",
+        "1 cucharadita de salsa de soja baja en sodio"
+      ],
+      "preparacion": "Saltear la ternera y verduras; mezclar con fideos y la salsa."
+    },
+    "Refrigerio 2": {
+      "plato": "1 puñado de uvas y 10 pistachos",
+      "ingredientes": ["10 uvas", "10 pistachos"],
+      "preparacion": "Consumir como snack."
+    },
+    "Cena": {
+      "plato": "Ensalada tibia de garbanzos y espinacas",
+      "ingredientes": ["1 taza de garbanzos cocidos", "2 tazas de espinacas salteadas", "1 cucharadita de aceite de oliva"],
+      "preparacion": "Mezclar garbanzos con espinacas y servir tibio."
+    }
+  },
+  "Sábado": {
+    "Desayuno": {
+      "plato": "Panqueques de avena (fáciles)",
+      "ingredientes": ["1/2 taza de avena molida", "1 huevo", "1/4 taza de leche", "1 cucharadita de polvo para hornear"],
+      "preparacion": "Mezclar todos los ingredientes y cocinar en sartén antiadherente por ambos lados."
+    },
+    "Refrigerio 1": {
+      "plato": "1 taza de fresas",
+      "ingredientes": ["1 taza de fresas lavadas"],
+      "preparacion": "Consumir natural o con yogur si se desea."
+    },
+    "Comida": {
+      "plato": "Pasta integral con salsa de tomate y albóndigas de pavo",
+      "ingredientes": [
+        "1 taza de pasta integral cocida",
+        "100 g albóndigas de pavo (hechas al horno)",
+        "Salsa de tomate natural"
+      ],
+      "preparacion": "Servir la pasta con albóndigas y salsa."
+    },
+    "Refrigerio 2": {
+      "plato": "Zanahorias baby y hummus",
+      "ingredientes": ["1 taza de zanahorias baby", "3 cucharadas de hummus"],
+      "preparacion": "Servir y untar."
+    },
+    "Cena": {
+      "plato": "Ensalada de pollo y manzana",
+      "ingredientes": ["100 g pollo desmenuzado", "1/2 manzana en cubos", "Lechuga y apio", "1 cucharadita de mayonesa ligera o yogur"],
+      "preparacion": "Mezclar los ingredientes y servir fresca."
+    }
+  },
+  "Domingo": {
+    "Desayuno": {
+      "plato": "Huevos revueltos con tomate y espinacas",
+      "ingredientes": ["2 huevos", "1 tomate picado", "1/2 taza de espinacas", "1 cucharadita de aceite"],
+      "preparacion": "Saltear tomate y espinacas, agregar huevos batidos y cocinar hasta cuajar."
+    },
+    "Refrigerio 1": {
+      "plato": "1 pera",
+      "ingredientes": ["1 pera"],
+      "preparacion": "Consumir natural."
+    },
+    "Comida": {
+      "plato": "Arroz integral con lentejas y verduras",
+      "ingredientes": ["1/2 taza arroz integral cocido", "1/2 taza lentejas cocidas", "Verduras mixtas salteadas"],
+      "preparacion": "Mezclar arroz con lentejas y verduras salteadas."
+    },
+    "Refrigerio 2": {
+      "plato": "Yogur natural con canela",
+      "ingredientes": ["1 yogur natural", "Una pizca de canela"],
+      "preparacion": "Mezclar canela y consumir."
+    },
+    "Cena": {
+      "plato": "Sopa de pollo con verduras",
+      "ingredientes": ["1 porción de caldo de pollo bajo en sal", "Verduras al gusto", "Pollo desmenuzado"],
+      "preparacion": "Cocinar todo hasta que las verduras estén tiernas y servir caliente."
+    }
+  }
+};
+
+function generateActivities(activityLevel, conditions){
+  const base = {
+    'sedentary': ['Caminata ligera 20 minutos después de comer', 'Estiramientos 10 minutos por la mañana'],
+    'light': ['Caminata rápida 30 minutos, 3 veces por semana', 'Rutina de fuerza ligera 2 veces por semana (20-30 min)'],
+    'moderate': ['Cardio 30-45 min, 3-5 veces/semana', 'Entrenamiento de fuerza 3 veces/semana (30-45 min)'],
+    'active': ['Entrenamiento intenso 45-60 min, 5-6 veces/semana', 'Trabajo de fuerza con progresión (45 min)'],
+    'very': ['Actividad física diaria intensiva, incluir descansos y recuperación activa']
+  };
+  let rec = base[activityLevel] || base['sedentary'];
+  if(conditions.map(c=>c.toLowerCase()).includes('diabetes')){
+    rec.unshift('Caminata postprandial 10-15 minutos para ayudar al control glucémico');
+  }
+  if(conditions.map(c=>c.toLowerCase()).includes('hipertensión')){
+    rec = rec.map(r => r + ' (evitar esfuerzos máximos sin supervisión)');
+  }
+  return rec;
+}
+
+let lastResult = null;
+
+function generate(){
+  const name = document.getElementById('name').value || '';
+  const age = parseFloat(document.getElementById('age').value) || 30;
+  const sex = document.getElementById('sex').value;
+  const weight = parseFloat(document.getElementById('weight').value) || 70;
+  const height = parseFloat(document.getElementById('height').value) || 170;
+  const activity = document.getElementById('activity').value;
+  const conditions = (document.getElementById('conditions').value || '').split(',').map(s=>s.trim()).filter(Boolean);
+  const meds = (document.getElementById('meds').value || '').split(',').map(s=>s.trim()).filter(Boolean);
+  const allergies = (document.getElementById('allergies').value || '').split(',').map(s=>s.trim().toLowerCase()).filter(Boolean);
+  const preference = document.getElementById('preference').value;
+
+  const bmr = Math.round(mifflinBMR(sex, weight, height, age));
+  let tdee = Math.round(bmr * activityFactor(activity));
+  const adjusted = adjustTDEE(tdee, conditions);
+  tdee = adjusted.tdee;
+
+  // Build summary
+  const summary = [
+    `Nombre: ${name || '—'}`,
+    `Edad: ${age} años`,
+    `Sexo: ${sex === 'male' ? 'Hombre' : 'Mujer'}`,
+    `Peso: ${weight} kg`,
+    `Talla: ${height} cm`,
+    `BMR (Mifflin–St Jeor): ${bmr} kcal/día`,
+    `GET (TDEE) estimado: ${tdee} kcal/día`,
+    `Preferencias: ${preference || 'Ninguna'}`,
+    `Condiciones: ${conditions.join(', ') || 'Ninguna'}`,
+    `Medicamentos: ${meds.join(', ') || 'Ninguno'}`,
+    `Alergias/Intolerancias: ${allergies.join(', ') || 'Ninguna'}`,
+    `Ajustes aplicados: ${adjusted.notes.join(' | ') || 'Ninguno'}`
+  ].join('\n');
+
+  document.getElementById('summary').textContent = summary;
+
+  // Activities
+  const acts = generateActivities(activity, conditions);
+  document.getElementById('activities').textContent = acts.map(a=>'• '+a).join('\\n');
+
+  // Menu
+  const menuDiv = document.getElementById('menu');
+  menuDiv.innerHTML = '';
+  Object.keys(weeklyMenu).forEach(day => {
+    const dayObj = weeklyMenu[day];
+    const dayEl = document.createElement('div');
+    dayEl.className = 'day';
+    const title = document.createElement('h3');
+    title.textContent = day;
+    dayEl.appendChild(title);
+    Object.keys(dayObj).forEach(meal => {
+      const mealInfo = dayObj[meal];
+      // Filter by allergies: if any ingredient includes allergy token, mark alternative
+      let blocked = false;
+      const allergyList = allergies || [];
+      mealInfo.ingredientes.forEach(ing => {
+        allergyList.forEach(a => {
+          if(a && ing.toLowerCase().includes(a)) blocked = true;
+        });
+      });
+      const mealDiv = document.createElement('div');
+      mealDiv.className = 'meal';
+      const mealTitle = document.createElement('strong');
+      mealTitle.textContent = meal + ': ' + mealInfo.plato;
+      mealDiv.appendChild(mealTitle);
+      const ul = document.createElement('ul');
+      mealInfo.ingredientes.forEach(i => {
+        const li = document.createElement('li');
+        li.textContent = i;
+        ul.appendChild(li);
+      });
+      mealDiv.appendChild(ul);
+      const prep = document.createElement('div');
+      prep.textContent = 'Preparación: ' + mealInfo.preparacion;
+      mealDiv.appendChild(prep);
+      if(blocked){
+        const warn = document.createElement('div');
+        warn.style.color = 'darkred';
+        warn.textContent = 'Aviso: Este plato contiene ingredientes que coinciden con sus alergias/intolerancias. Sustituir según indicaciones.';
+        mealDiv.appendChild(warn);
+      }
+      dayEl.appendChild(mealDiv);
+    });
+    menuDiv.appendChild(dayEl);
+  });
+
+  document.getElementById('output').style.display = 'block';
+
+  lastResult = {patient:{name,age,sex,weight,height,activity,conditions,meds,allergies,preference}, calculations:{bmr,tdee}, activities:acts, menu:weeklyMenu};
+  // enable download link
+  const dl = document.getElementById('downloadLink');
+  dl.style.display = 'inline-block';
+}
+
+function downloadFile(){
+  if(!lastResult){ alert('Genera el plan primero con el botón Generar plan.'); return; }
+  const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(lastResult, null, 2));
+  const a = document.createElement('a');
+  a.href = dataStr;
+  a.download = 'plan_nutricional.json';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+// Optional: prefill with an example
+document.getElementById('name').value = 'María Pérez';
+document.getElementById('age').value = 28;
+document.getElementById('sex').value = 'female';
+document.getElementById('weight').value = 65;
+document.getElementById('height').value = 165;
+document.getElementById('activity').value = 'light';
+</script>
+</body>
+</html>
